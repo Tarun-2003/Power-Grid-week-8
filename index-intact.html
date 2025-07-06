@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>IEEE RTS Grid – Voltage Group Coloring</title>
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <script src="./cola.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #f9f9f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    svg {
+      background: white;
+      border: 1px solid #ccc;
+      width: 2000px;
+      height: 2000px;
+    }
+
+    .link {
+      stroke: #000000; /* Set the edges (links) color to black */
+      stroke-opacity: 0.6;
+    }
+
+    .transformer-link {
+      stroke: red;
+      stroke-width: 5px;
+      stroke-dasharray: 8,4; /* Dashed line for transformer edges */
+    }
+
+    .node {
+      stroke: #fff;
+      stroke-width: 1.5px;
+      cursor: grab;
+    }
+
+    .label {
+      font: 10px sans-serif;
+      pointer-events: none;
+    }
+
+    .group {
+      stroke: #333;
+      fill-opacity: 0.85; /* Increased opacity for visibility */
+      stroke-width: 2px;
+    }
+
+    #tooltip {
+      position: absolute;
+      background: white;
+      border: 1px solid #ccc;
+      padding: 4px;
+      font-size: 12px;
+      display: none;
+      pointer-events: none;
+    }
+
+    .legend {
+      font: 12px sans-serif;
+      pointer-events: none;
+    }
+
+    .legend rect {
+      width: 20px;
+      height: 20px;
+      stroke: #000;
+    }
+
+    .legend text {
+      font-size: 12px;
+      margin-left: 5px;
+    }
+
+  </style>
+</head>
+<body>
+  <div id="tooltip"></div>
+  <svg width="960" height="600"></svg>
+
+  <script>  
+
+
+    d3.json("segmentMap.json", function (error, segmentMap) {
+      if (error) {
+        console.error('Error loading segmentMap.json:', error);
+        alert('Could not load segmentMap.json. Please make sure the file is available.');
+        return;
+      }
+
+
+
+    d3.json("pglib_opf_case30_ieee.m.json", function (graphRaw) {
+      const width = 960, height = 600;
+
+      const segmentMap = JSON.parse(localStorage.getItem("segmentMap") || "{}");
+
+      const graph = {
+        nodes: graphRaw.nodes.map(n => ({
+          id: n.data.id,
+          voltage: n.data.voltage,
+          group: n.data.voltage,
+          component: segmentMap[n.data.id] || "Unlabeled",
+          width: 16,
+          height: 16
+        })),
+        links: graphRaw.edges.map(e => ({
+          source: e.data.source,
+          target: e.data.target
+        }))
+      };
+
+      // Index mapping
+      const idToIndex = {};
+      graph.nodes.forEach((node, i) => idToIndex[node.id] = i);
+      graph.links.forEach(link => {
+        link.source = idToIndex[link.source];
+        link.target = idToIndex[link.target];
+      });
+
+      // Detect transformer edges (edges where source and target nodes have different voltage levels)
+      graph.links.forEach(link => {
+        const sourceNode = graph.nodes[link.source];
+        const targetNode = graph.nodes[link.target];
+
+        // Mark as transformer link if voltage levels differ
+        link.isTransformer = sourceNode.voltage !== targetNode.voltage;
+      });
+
+      // Group nodes by component
+      const groupMap = {};
+      graph.nodes.forEach((node) => {
+        if (!groupMap[node.component]) groupMap[node.component] = [];
+        groupMap[node.component].push(node.id);
+      });
+
+      const groups = Object.values(groupMap).map(leafIds => ({
+        leaves: leafIds.map(id => graph.nodes.findIndex(n => n.id === id))
+      }));
+
+      // Updated random color generator function for lighter colors
+      const getLightRandomColor = () => {
+        const r = Math.floor(Math.random() * 106) + 150; // Ensuring a lighter color, minimum of 150
+        const g = Math.floor(Math.random() * 106) + 150; // Ensuring a lighter color, minimum of 150
+        const b = Math.floor(Math.random() * 106) + 150; // Ensuring a lighter color, minimum of 150
+        return `rgb(${r},${g},${b})`;  // Random but consistently light colors
+      };
+
+      // Map segment -> random color for bounding box
+      const groupRandomColors = {};
+      Object.entries(groupMap).forEach(([segment, nodeIds]) => {
+        // Assign a random light color to each group (segment)
+        groupRandomColors[segment] = getLightRandomColor();
+      });
+
+      const svg = d3.select("svg");
+      const g = svg.append("g");
+
+      const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+      const d3cola = cola.d3adaptor(d3)
+        .size([width, height])
+        // .linkDistance(120)
+        .linkDistance(d => d.isTransformer ? 60 : 120)
+        .avoidOverlaps(true)
+        .handleDisconnected(true)
+        .nodes(graph.nodes)
+        .links(graph.links)
+        .groups(groups)
+        .jaccardLinkLengths(100, 0.7)
+        .start(100, 150, 200);
+
+      const group = g.selectAll(".group")
+        .data(groups)
+        .enter().append("rect")
+        .attr("class", "group")
+        .attr("rx", 10)
+        .attr("ry", 10)
+        .style("fill", (d, i) => {
+          const segment = Object.keys(groupMap)[i];
+          return groupRandomColors[segment]; // Use random light color here
+        })
+        .style("opacity", 0.85)  // Increased opacity for better visibility
+        .call(d3cola.drag);
+
+      const link = g.selectAll(".link")
+        .data(graph.links)
+        .enter().append("line")
+        .attr("class", d => d.isTransformer ? "link transformer-link" : "link");  // Apply transformer-link class for transformer edges
+
+      const node = g.selectAll(".node")
+        .data(graph.nodes)
+        .enter().append("circle")
+        .attr("class", "node")
+        .attr("r", 7)
+        .style("fill", d => color(d.voltage))
+        .call(d3cola.drag);
+
+      const label = g.selectAll(".label")
+        .data(graph.nodes)
+        .enter().append("text")
+        .attr("class", "label")
+        .text(d => d.id)
+        .attr("x", d => d.x + 12)  // Increase the x offset to move the label further to the right
+        .attr("y", d => d.y + 12)  // Increase the y offset to move the label further down
+        .call(d3cola.drag);
+
+      const tooltip = d3.select("#tooltip");
+      node
+        .on("mouseover", function (d) {
+          tooltip.style("left", (d3.event.pageX + 5) + "px")
+            .style("top", (d3.event.pageY - 28) + "px")
+            .style("display", "block")
+            .html(
+              "Bus ID: " + d.id +
+              "<br>Voltage: " + d.voltage + " kV" +
+              "<br>Segment: " + d.component
+            );
+        })
+        .on("mouseout", () => tooltip.style("display", "none"));
+
+      d3cola.on("tick", function () {
+        link
+          .attr("x1", d => d.source.x)
+          .attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x)
+          .attr("y2", d => d.target.y);
+
+        node
+          .attr("cx", d => d.x)
+          .attr("cy", d => d.y);
+
+        label
+          .attr("x", d => d.x + 12)  // Adjust label position (further away from nodes)
+          .attr("y", d => d.y + 12); // Adjust label position (further away from nodes)
+
+        group
+          .attr("x", d => d.bounds.x)
+          .attr("y", d => d.bounds.y)
+          .attr("width", d => d.bounds.width())
+          .attr("height", d => d.bounds.height());
+      });
+
+      setTimeout(() => {
+        const bbox = g.node().getBBox();
+        const dx = width / 2 - (bbox.x + bbox.width / 2);
+        const dy = height / 2 - (bbox.y + bbox.height / 2);
+        g.transition().duration(1000).attr("transform", `translate(${dx},${dy})`);
+      }, 1000);
+
+      // Create legend for component colors (only for components with more than 1 node)
+      const legend = svg.append("g").attr("class", "legend").attr("transform", "translate(20, 20)");
+
+      // Filter components with more than 1 node
+      const filteredGroupMap = Object.entries(groupRandomColors).filter(([key, value]) => groupMap[key].length > 1);
+
+      // Legend for components (bounding boxes colors)
+      legend.selectAll(".legend-item")
+        .data(filteredGroupMap)
+        .enter().append("g")
+        .attr("class", "legend-item")
+        .attr("transform", (d, i) => `translate(0, ${i * 25})`)
+        .each(function(d, i) {
+          d3.select(this).append("rect")
+            .attr("width", 20)
+            .attr("height", 20)
+            .style("fill", d[1]);
+
+          d3.select(this).append("text")
+            .attr("x", 30)
+            .attr("y", 15)
+            .style("fill", "#000")
+            .text("Component: "+d[0]);  // Display the component name
+        });
+    });
+  });
+  </script>
+</body>
+</html>
