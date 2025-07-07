@@ -94,8 +94,11 @@
       }
 
 
-
-    d3.json("pglib_opf_case30_ieee.m.json", function (graphRaw) {
+const fileName = localStorage.getItem("uploadedFilename");
+if (!fileName) {
+  alert("No uploaded file found.");
+} else {
+    d3.json(fileName, function (graphRaw) {
       const width = 960, height = 600;
 
       const segmentMap = JSON.parse(localStorage.getItem("segmentMap") || "{}");
@@ -277,7 +280,7 @@
             .style("fill", "#000")
             .text("Component: "+d[0]);  // Display the component name
         });
-    });
+    });}
   });
   </script>
 </body>
